@@ -1,0 +1,135 @@
+---
+title: "lab 6 kriging using depth to groundwater"
+author: "Vanessa Rathbone"
+date: "2/18/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(janitor)
+library(sf)
+library(tmap)
+library(gstat)
+library(stars)
+```
+
+
+```{r}
+ ca_dgw <- read_sf(here("ca_dgw"), layer = "F2013_DBGS_Points_20150720_093252") %>% 
+  clean_names()
+
+#check projection:
+st_crs(ca_dgw)
+
+#read in california counties spatial data
+
+ca_counties <- read_sf(here("ca_counties"), layer = "CA_Counties_TIGER2016") %>% 
+  clean_names() %>% 
+  select(name)
+
+st_crs(ca_counties)
+#oh no! different spatial data from the ca_dgw CRS
+
+ca_counties <- st_transform(ca_counties, st_crs(ca_dgw)) #instead of st_crs() can just put 4326
+```
+
+```{r}
+#can add anything typical of a ggplot
+
+ggplot()+
+  geom_sf(data = ca_counties) +
+  geom_sf(data = ca_dgw, aes(color = dgbs))
+```
+```{r}
+tmap_mode("view")
+
+#possible to add other information in the tool tip hover feature, all customizable
+tm_shape(ca_dgw) +
+  tm_dots("dgbs")
+
+```
+
+```{r}
+#looking at san joaquin county
+#create a single spatial polygon of sj county. 
+
+sj_county <- ca_counties %>% 
+  filter(name == "San Joaquin")
+
+#only depth to ground water rations for sj county
+sj_depth <- ca_dgw %>% 
+  st_intersection(sj_county)
+
+plot(sj_depth)
+plot(sj_county)
+
+#let's combine them in a plot
+ggplot() +
+  geom_sf(data = sj_county) +
+  geom_sf(data = sj_depth, aes(color = dgbs))
+
+#observations: greater depths to groundwater generally to the east in particular the northeastern corner. 
+
+```
+```{r}
+#be sure to check for duplicate points because they won't be registered in kriging
+
+well_duplicates <- sj_depth %>% 
+  get_dupes(latitude, longitude)
+
+#2 points in our dataset are overlapping, so we're going to remove them for simplicity
+sj_depth <- sj_depth %>% 
+  filter(!local_well %in% well_duplicates$local_well)
+
+#check new df to see dupes removed
+sj_depth %>% 
+  get_dupes(latitude, longitude)
+```
+
+### Create a varigram
+```{r}
+
+#Use a variogram to display the variability between data points as a function of distance
+sj_dgw_vgm <- variogram(dgbs ~ 1, data = sj_depth)
+
+plot(sj_dgw_vgm)
+
+#here we see that as the distance between two points increase, the semivariance increases which is a decrease in the correlation in the values of those observations
+#can use other models depending on the shape of your variogram, we're using the Gausian ("Gau") model, could use the exponential ("Exp") or spherical ("Sph") model 
+
+sj_dgw_vgm_fit <- fit.variogram(sj_dgw_vgm, model = vgm(nugget = 20, 
+                                                        psill = 3000, 
+                                                        range = 30,
+                                                        model = "Gau"))
+
+sj_dgw_vgm_fit
+
+plot(sj_dgw_vgm, sj_dgw_vgm_fit)
+
+```
+### Spatial krigin (interpolation)
+```{r}
+
+#make a grid that only contains an area over the sj county
+#first find the limits of the lat/long of the sj county 
+#stars() helpful when creating rasters
+
+sj_grid <- st_bbox(sj_county) %>% 
+  st_as_stars(dx = 0.01, dy = 0.01) %>% #resolution of our grid cells
+  st_set_crs(4326) %>% 
+  st_crop(sj_county)
+
+plot(sj_grid)
+
+```
+```{r}
+sj_dgw_krige <- krige(dgbs ~ 1, sj_depth, sj_grid, model = sj_dgw_vgm_fit) #~1 is a as a function of 1, which means ordinary kriging, or assume there is a constant but unknown field
+
+plot(sj_dgw_krige)
+
+```
+

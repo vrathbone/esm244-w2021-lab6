@@ -131,5 +131,7 @@ sj_dgw_krige <- krige(dgbs ~ 1, sj_depth, sj_grid, model = sj_dgw_vgm_fit) #~1 i
 
 plot(sj_dgw_krige)
 
+#check the key for alts to changing this to points for a ggplot and other data viz alternatives. 
+
 ```
 
